@@ -27,12 +27,22 @@ func main() {
 		panic(err)
 	}
 
-	version, err := getKubernetesVersion(clientset)
+	connectivity, err := apiServerConnectivity(clientset)
 	if err != nil {
+		fmt.Printf("API Server connectivity check failed\n")
+		fmt.Printf("%s\n", connectivity)
+		fmt.Printf("%v\n", err)
 		panic(err)
-	}
+	} else {
+		fmt.Printf("API server is alive and ready!\n")
+		fmt.Printf("Connection........%s\n", connectivity)
 
-	fmt.Printf("Connected to Kubernetes %s\n", version)
+		version, err := getKubernetesVersion(clientset)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Printf("Connected to Kubernetes %s\n", version)
+	}
 
 	if _, err := checkDeploymentReplicas(clientset); err != nil {
 		fmt.Printf("%v\n", err)
@@ -59,13 +69,13 @@ func getKubernetesVersion(clientset kubernetes.Interface) (string, error) {
 // startServer launches an HTTP server with defined handlers and blocks until it's terminated or fails with an error.
 //
 // Expects a listenAddr to bind to.
-func startServer(listenAddr string) error {
-	http.HandleFunc("/healthz", healthHandler)
+//func startServer(listenAddr string) error {
+//	http.HandleFunc("/healthz", healthHandler)
 
-	fmt.Printf("Server listening on %s\n", listenAddr)
+//	fmt.Printf("Server listening on %s\n", listenAddr)
 
-	return http.ListenAndServe(listenAddr, nil)
-}
+//	return http.ListenAndServe(listenAddr, nil)
+//}
 
 // healthHandler responds with the health status of the application.
 func healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -88,11 +98,27 @@ func checkDeploymentReplicas(clientset kubernetes.Interface) (string, error) {
 	}
 
 	for _, deployment := range alldeployments.Items {
-		if *deployment.Spec.Replicas != deployment.Status.AvailableReplicas {
-
-			fmt.Printf("WARNING: Deployment replica check found a mismatch \n %v", err)
-			return "", fmt.Errorf("NAMESPACE:%s, NAME:%s, EXPECTED-REPLICAS:%d, AVAILABLE-REPLICAS:%d", deployment.Namespace, deployment.Name, *deployment.Spec.Replicas, deployment.Status.AvailableReplicas)
+		if *deployment.Spec.Replicas != deployment.Status.ReadyReplicas {
+			fmt.Printf("WARNING: Deployment replica check found mismatches \n %v", err)
+			return "", fmt.Errorf("NAMESPACE:%s, NAME:%s, EXPECTED-REPLICAS:%d, READY-REPLICAS:%d", deployment.Namespace, deployment.Name, *deployment.Spec.Replicas, deployment.Status.ReadyReplicas)
 		}
 	}
 	return "", nil
+}
+
+func apiServerConnectivity(clientset kubernetes.Interface) (string, error) {
+	fmt.Println("Checking API Server connectivity")
+	request := clientset.Discovery().RESTClient().Get()
+
+	isApiServerAlive := request.AbsPath("/livez").Do(context.TODO())
+	if isApiServerAlive.Error() != nil {
+		return "Liveness check failed", isApiServerAlive.Error()
+	}
+
+	isApiServerReady := request.AbsPath("/readyz").Do(context.TODO())
+	if isApiServerReady.Error() != nil {
+		return "Readiness check failed", isApiServerReady.Error()
+	}
+
+	return "ESTABLISHED", nil
 }
