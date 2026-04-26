@@ -2,18 +2,33 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+// DeploymentHealth represents a deployment with mismatched desired and available replicas.
+type DeploymentHealth struct {
+	Namespace         string `json:"namespace"`
+	Deployment        string `json:"deployment"`
+	DesiredReplicas   int32  `json:"desiredReplicas"`
+	AvailableReplicas int32  `json:"availableReplicas"`
+}
+
+type DeploymentHealthResponse struct {
+	Healthy    bool               `json:"healthy"`
+	Mismatches []DeploymentHealth `json:"mismatches"`
+}
+
 func main() {
 	kubeconfig := flag.String("kubeconfig", "", "path to kubeconfig, leave empty for in-cluster")
-	//	listenAddr := flag.String("address", ":8080", "HTTP server listen address")
+	listenAddr := flag.String("address", ":8080", "HTTP server listen address")
 
 	flag.Parse()
 
@@ -27,30 +42,15 @@ func main() {
 		panic(err)
 	}
 
-	connectivity, err := apiServerConnectivity(clientset)
+	version, err := getKubernetesVersion(clientset)
 	if err != nil {
-		fmt.Printf("API Server connectivity check failed\n")
-		fmt.Printf("%s\n", connectivity)
-		fmt.Printf("%v\n", err)
 		panic(err)
-	} else {
-		fmt.Printf("API server is alive and ready!\n")
-		fmt.Printf("Connection........%s\n", connectivity)
-
-		version, err := getKubernetesVersion(clientset)
-		if err != nil {
-			panic(err)
-		}
-		fmt.Printf("Connected to Kubernetes %s\n", version)
 	}
 
-	if _, err := checkDeploymentReplicas(clientset); err != nil {
-		fmt.Printf("%v\n", err)
+	fmt.Printf("Connected to Kubernetes %s\n", version)
+	if err := startServer(*listenAddr, clientset); err != nil {
+		panic(err)
 	}
-
-	//	if err := startServer(*listenAddr); err != nil {
-	//		panic(err)
-	//	}
 
 }
 
@@ -69,13 +69,15 @@ func getKubernetesVersion(clientset kubernetes.Interface) (string, error) {
 // startServer launches an HTTP server with defined handlers and blocks until it's terminated or fails with an error.
 //
 // Expects a listenAddr to bind to.
-//func startServer(listenAddr string) error {
-//	http.HandleFunc("/healthz", healthHandler)
+func startServer(listenAddr string, clientset kubernetes.Interface) error {
+	http.HandleFunc("/healthz", healthHandler)
+	http.HandleFunc("/deploymentHealth", deploymentHealthHandler(clientset))
+	http.HandleFunc("/apiServerConnectivity", apiServerConnectivityHandler(clientset))
 
-//	fmt.Printf("Server listening on %s\n", listenAddr)
+	fmt.Printf("Server listening on %s\n", listenAddr)
 
-//	return http.ListenAndServe(listenAddr, nil)
-//}
+	return http.ListenAndServe(listenAddr, nil)
+}
 
 // healthHandler responds with the health status of the application.
 func healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -88,37 +90,86 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // Check Deployment Replicas and compare with desired count, return an error if they don't match.
-func checkDeploymentReplicas(clientset kubernetes.Interface) (string, error) {
-	contxt := context.Background()
-	namespace := "" //all namespaces by default
+func deploymentHealthHandler(clientset kubernetes.Interface) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		mismatches, err := checkDeploymentHealth(clientset)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to check deployments: %v", err), http.StatusInternalServerError)
+			return
+		}
 
-	alldeployments, err := clientset.AppsV1().Deployments(namespace).List(contxt, metav1.ListOptions{})
+		response := DeploymentHealthResponse{
+			Healthy:    len(mismatches) == 0,
+			Mismatches: mismatches,
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		// Return 200 if healthy, 207 Multi-Status if there are mismatches
+		if !response.Healthy {
+			w.WriteHeader(http.StatusMultiStatus)
+		}
+
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			fmt.Println("failed to encode response")
+		}
+	}
+}
+
+func checkDeploymentHealth(clientset kubernetes.Interface) ([]DeploymentHealth, error) {
+	cntx := context.Background()
+	namespace := "" //all namespaces by default
+	var mismatches []DeploymentHealth
+
+	alldeployments, err := clientset.AppsV1().Deployments(namespace).List(cntx, metav1.ListOptions{})
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("Failed to list deployments\n%v\n", err)
 	}
 
 	for _, deployment := range alldeployments.Items {
-		if *deployment.Spec.Replicas != deployment.Status.ReadyReplicas {
-			fmt.Printf("WARNING: Deployment replica check found mismatches \n %v", err)
-			return "", fmt.Errorf("NAMESPACE:%s, NAME:%s, EXPECTED-REPLICAS:%d, READY-REPLICAS:%d", deployment.Namespace, deployment.Name, *deployment.Spec.Replicas, deployment.Status.ReadyReplicas)
+		desiredReplicas := *deployment.Spec.Replicas
+		availableReplicas := deployment.Status.AvailableReplicas
+
+		if desiredReplicas == availableReplicas {
+			continue
 		}
+		mismatches = append(mismatches, DeploymentHealth{
+			Namespace:         deployment.Namespace,
+			Deployment:        deployment.Name,
+			DesiredReplicas:   desiredReplicas,
+			AvailableReplicas: availableReplicas,
+		})
 	}
-	return "", nil
+	return mismatches, nil
+}
+
+func apiServerConnectivityHandler(clientset kubernetes.Interface) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		connectionStatus, err := apiServerConnectivity(clientset)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("API Server connectivity check failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintf(w, "API Server connectivity status: %s", connectionStatus)
+	}
 }
 
 func apiServerConnectivity(clientset kubernetes.Interface) (string, error) {
 	fmt.Println("Checking API Server connectivity")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	request := clientset.Discovery().RESTClient().Get()
 
-	isApiServerAlive := request.AbsPath("/livez").Do(context.TODO())
+	isApiServerAlive := request.AbsPath("/livez").Do(ctx)
 	if isApiServerAlive.Error() != nil {
 		return "Liveness check failed", isApiServerAlive.Error()
 	}
 
-	isApiServerReady := request.AbsPath("/readyz").Do(context.TODO())
+	isApiServerReady := request.AbsPath("/readyz").Do(ctx)
 	if isApiServerReady.Error() != nil {
 		return "Readiness check failed", isApiServerReady.Error()
 	}
 
-	return "ESTABLISHED", nil
+	return "CONNECTED", nil
 }

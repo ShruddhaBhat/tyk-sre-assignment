@@ -45,3 +45,21 @@ func TestHealthHandler(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "ok", string(resp))
 }
+
+func TestDeploymentHealthHandler(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/deploymentHealth", nil)
+	rec := httptest.NewRecorder()
+
+	deploymentHealthHandler(fake.NewSimpleClientset())(rec, req)
+	res := rec.Result()
+
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+
+	defer func(Body io.ReadCloser) {
+		assert.NoError(t, Body.Close())
+	}(res.Body)
+	resp, err := io.ReadAll(res.Body)
+
+	assert.NoError(t, err)
+	assert.Equal(t, `{"healthy":true,"mismatches":null}`+"\n", string(resp))
+}

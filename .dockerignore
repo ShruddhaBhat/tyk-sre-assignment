@@ -1,0 +1,9 @@
+# Exclude test files from Docker build
+**/*_test.go
+
+# Exclude other development files
+.git/
+.gitignore
+.github/**
+README.md
+LICENSE.md
