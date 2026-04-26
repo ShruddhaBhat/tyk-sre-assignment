@@ -66,10 +66,14 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}/warden
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: ./golang
+          platforms: linux/amd64,linux/arm64 # multi-arch build
           file: ./golang/Dockerfile
           push: ${{ github.event_name == 'push' }}  # only push on merge to main, but build on PRs
           tags: ${{ steps.meta.outputs.tags }}
