@@ -25,7 +25,7 @@ jobs:
           cache: true
   
       - name: Download Dependencies
-        run: go mod download
+        run: go mod download all
   
       - name: Verify Dependencies
         run: go mod verify
@@ -34,7 +34,7 @@ jobs:
         run: go build -v ./...
 
       - name: Test
-        run: go test -v ./..
+        run: go test -v ./...
 
   docker:
     name: Docker Build and Push
