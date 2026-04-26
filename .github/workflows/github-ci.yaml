@@ -70,6 +70,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ./golang
+          platforms: linux/amd64,linux/arm64 # multi-arch build
           file: ./golang/Dockerfile
           push: ${{ github.event_name == 'push' }}  # only push on merge to main, but build on PRs
           tags: ${{ steps.meta.outputs.tags }}
