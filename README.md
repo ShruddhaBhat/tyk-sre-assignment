@@ -1,25 +1,20 @@
-# tyk-sre-assignment
+# Warden
 
-This repository contains the boilerplate projects for the SRE role interview assignments.
+`warden` is a Kubernetes cluster health monitoring tool built on top of the [tyk-sre-assignment](https://github.com/TykTechnologies/tyk-sre-assignment/tree/main/golang) boilerplate as part of the Tyk SRE assignment.
 
-### Project
+It monitors deployment replica drift across all namespaces and ensures the tool is always connected to the Kubernetes API server.
 
-Location: https://github.com/TykTechnologies/tyk-sre-assignment/tree/main/golang
+## Endpoints
 
-In order to build the project run:
-```
-go mod tidy & go build
-```
+| Endpoint | Description |
+|---|---|
+| `/healthz` | Health check for Warden itself |
+| `/deploymentHealth` | Lists deployments where available replicas don't match desired |
+| `/apiServerConnectivity` | Verifies connectivity to the Kubernetes API server |
 
-To run it against a real Kubernetes API server:
-```
-./tyk-sre-assignment --kubeconfig '/path/to/your/kube/conf' --address ":8080"
-```
-
-To execute unit tests:
-```
-go test -v
-```
+## Prerequisites
+- Docker
+- A valid kubeconfig at `~/.kube/config`
 
 ### Running with Docker
 
@@ -35,5 +30,23 @@ docker run --network host \
   ghcr.io/shruddhabhat/tyk-sre-assignment/warden:main \
   /app/warden --kubeconfig /app/kubeconfig
 ```
+
+### Development
+
+Build
+```
+go mod tidy && go build
+```
+
+Test
+```
+go test -v
+```
+
+Run locally
+```
+./warden --kubeconfig '/path/to/your/kube/conf' --address ":8080"
+```
+
 
 
