@@ -28,7 +28,6 @@ type deploymentHealthResponse struct {
 
 type apiServerConnectivityResponse struct {
 	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
 }
 
 func main() {
@@ -151,23 +150,31 @@ func apiServerConnectivityHandler(clientset kubernetes.Interface) http.HandlerFu
 	return func(w http.ResponseWriter, r *http.Request) {
 		connectionStatus, err := apiServerConnectivity(clientset)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("API Server connectivity check failed: %v", err), http.StatusInternalServerError)
-			return
-		}
 
-		response := apiServerConnectivityResponse{
-			Status: connectionStatus,
-		}
-		w.Header().Set("Content-Type", "application/json")
+			response := apiServerConnectivityResponse{
+				Status: connectionStatus[0].Status,
+			}
+			w.Header().Set("Content-Type", "application/json")
 
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			fmt.Println("failed to encode response")
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				fmt.Println("failed to encode response")
+			}
+		} else {
+			response := apiServerConnectivityResponse{
+				Status: connectionStatus[0].Status,
+			}
+			w.Header().Set("Content-Type", "application/json")
+
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				fmt.Println("failed to encode response")
+			}
 		}
 	}
 }
 
-func apiServerConnectivity(clientset kubernetes.Interface) (string, error) {
+func apiServerConnectivity(clientset kubernetes.Interface) ([]apiServerConnectivityResponse, error) {
 	fmt.Println("Checking API Server connectivity")
+	var connectionStatus = []apiServerConnectivityResponse{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -176,13 +183,16 @@ func apiServerConnectivity(clientset kubernetes.Interface) (string, error) {
 
 	isApiServerAlive := request.AbsPath("/livez").Do(ctx)
 	if isApiServerAlive.Error() != nil {
-		return "Liveness check failed", isApiServerAlive.Error()
+		connectionStatus = []apiServerConnectivityResponse{{Status: "Liveness check failed"}}
+		return connectionStatus, isApiServerAlive.Error()
 	}
 
 	isApiServerReady := request.AbsPath("/readyz").Do(ctx)
 	if isApiServerReady.Error() != nil {
-		return "Readiness check failed", isApiServerReady.Error()
+		connectionStatus = []apiServerConnectivityResponse{{Status: "Readiness check failed"}}
+		return connectionStatus, isApiServerReady.Error()
 	}
 
-	return "CONNECTED", nil
+	connectionStatus = []apiServerConnectivityResponse{{Status: "CONNECTED"}}
+	return connectionStatus, nil
 }
