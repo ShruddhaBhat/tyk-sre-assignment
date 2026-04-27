@@ -13,17 +13,22 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// DeploymentHealth represents a deployment with mismatched desired and available replicas.
-type DeploymentHealth struct {
+// deploymentHealth represents a deployment with mismatched desired and available replicas.
+type deploymentHealth struct {
 	Namespace         string `json:"namespace"`
 	Deployment        string `json:"deployment"`
 	DesiredReplicas   int32  `json:"desiredReplicas"`
 	AvailableReplicas int32  `json:"availableReplicas"`
 }
 
-type DeploymentHealthResponse struct {
+type deploymentHealthResponse struct {
 	Healthy    bool               `json:"healthy"`
-	Mismatches []DeploymentHealth `json:"mismatches"`
+	Mismatches []deploymentHealth `json:"mismatches"`
+}
+
+type apiServerConnectivityResponse struct {
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
 }
 
 func main() {
@@ -98,7 +103,7 @@ func deploymentHealthHandler(clientset kubernetes.Interface) http.HandlerFunc {
 			return
 		}
 
-		response := DeploymentHealthResponse{
+		response := deploymentHealthResponse{
 			Healthy:    len(mismatches) == 0,
 			Mismatches: mismatches,
 		}
@@ -115,10 +120,10 @@ func deploymentHealthHandler(clientset kubernetes.Interface) http.HandlerFunc {
 	}
 }
 
-func checkDeploymentHealth(clientset kubernetes.Interface) ([]DeploymentHealth, error) {
+func checkDeploymentHealth(clientset kubernetes.Interface) ([]deploymentHealth, error) {
 	cntx := context.Background()
 	namespace := "" //all namespaces by default
-	var mismatches []DeploymentHealth
+	var mismatches []deploymentHealth
 
 	alldeployments, err := clientset.AppsV1().Deployments(namespace).List(cntx, metav1.ListOptions{})
 	if err != nil {
@@ -132,7 +137,7 @@ func checkDeploymentHealth(clientset kubernetes.Interface) ([]DeploymentHealth, 
 		if desiredReplicas == availableReplicas {
 			continue
 		}
-		mismatches = append(mismatches, DeploymentHealth{
+		mismatches = append(mismatches, deploymentHealth{
 			Namespace:         deployment.Namespace,
 			Deployment:        deployment.Name,
 			DesiredReplicas:   desiredReplicas,
@@ -149,7 +154,15 @@ func apiServerConnectivityHandler(clientset kubernetes.Interface) http.HandlerFu
 			http.Error(w, fmt.Sprintf("API Server connectivity check failed: %v", err), http.StatusInternalServerError)
 			return
 		}
-		fmt.Fprintf(w, "API Server connectivity status: %s", connectionStatus)
+
+		response := apiServerConnectivityResponse{
+			Status: connectionStatus,
+		}
+		w.Header().Set("Content-Type", "application/json")
+
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			fmt.Println("failed to encode response")
+		}
 	}
 }
 
